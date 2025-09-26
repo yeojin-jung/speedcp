@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "speedcp"
+version = "0.1.0"
+description = "SpeedCP: fast kernel-based conditional conformal prediction"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { file = "LICENSE" }
+authors = [{ name = "Yeo Jin Jung", email = "jjung1089@gmail.com" }]
+dependencies = [
+  "numpy",
+  "scipy",
+  "scikit-learn",
+  "cvxopt; platform_system != 'Windows'", 
+  "matplotlib",
+  "pandas",
+]
+
+[tool.setuptools]
+packages = ["speedcp"]
