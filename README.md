@@ -3,7 +3,7 @@
 [![PyPI version](https://badge.fury.io/py/speedcp.svg)](https://pypi.org/project/speedcp/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-SpeedCP is a Python package for our paper  **SpeedCP: Kernel-based conditional conformal prediction**.  
+SpeedCP is a Python package for our paper  **SpeedCP: Kernel-based conditional conformal prediction** [link](https://www.arxiv.org/abs/2509.24100).  
 It provides efficient algorithms for constructing prediction sets with **conditional coverage guarantees**.
 
 ---
@@ -50,4 +50,4 @@ If you use this code, please cite:
 ## 🔗 Links
 - 📦 PyPI: 
 - 💻 GitHub: github.com/yeojin-jung/speedcp
-- 📑 Paper: link to arXiv when available
+- 📑 Paper: https://www.arxiv.org/abs/2509.24100
