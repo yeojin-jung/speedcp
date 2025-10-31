@@ -49,5 +49,5 @@ If you use this code, please cite:
 ```
 ## 🔗 Links
 - 📦 PyPI: 
-- 💻 GitHub: github.com/yeojin-jung/speedcp
+- 💻 GitHub: https://github.com/yeojin-jung/speedcp/blob/main/README.md
 - 📑 Paper: https://www.arxiv.org/abs/2509.24100
