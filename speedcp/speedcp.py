@@ -1,8 +1,10 @@
 import numpy as np
-from FastKernCP.utils import *
-from FastKernCP.lambda_trace import lambda_path
-from FastKernCP.S_trace import S_path
+import time
+from speedcp.utils import *
+from speedcp.lambda_trace import lambda_path
+from speedcp.S_trace import S_path
 from typing import Tuple
+from sklearn.model_selection import KFold, train_test_split
 
 class SpeedCP:
     """
@@ -45,8 +47,9 @@ class SpeedCP:
         gamma = None,
         gamma_grid: np.ndarray = np.logspace(0, 2, 50),
         use_cv = False,
+        use_split = False,
         randomize = True,
-        verbose: bool = False,
+        verbose = False,
     ):
         self.alpha = float(alpha)
         self.max_steps = int(max_steps)
@@ -58,6 +61,7 @@ class SpeedCP:
         self.gamma = None if gamma is None else float(gamma)
         self.gamma_grid = np.asarray(gamma_grid, dtype=float)
         self.use_cv = bool(use_cv)
+        self.use_split = bool(use_split)
         self.randomize = bool(randomize)
         self.verbose = bool(verbose)
         self.lam = None
@@ -76,7 +80,7 @@ class SpeedCP:
     # --------------------------------------------
     def search_gamma_lambda(self, X_cal: np.ndarray, Phi_cal: np.ndarray, S_cal: np.ndarray):
         """
-        Grid search for gamma and lambda by CSIC,
+        Grid search for gamma and lambda by CSIC (Schwarz information criterion),
         and stores: self.gamma, self.lam, self.calib_v, self.calib_eta, self.sics.
         """
         S_cal = np.asarray(S_cal, float).ravel()
@@ -95,6 +99,7 @@ class SpeedCP:
             self.calib_eta = res["eta_arr"][best, :].copy() if res.get("eta_arr") is not None else None
             self.sics = np.array([res["Csic"][best]], dtype=float)
             self.best_idx = best
+            return
 
         best_sic = np.inf
         best_gamma = None
@@ -136,30 +141,26 @@ class SpeedCP:
         Cross-validated gamma and lambda search
         and stores: self.gamma, self.lam, self.calib_v, self.calib_eta, self.sics.
         """
-        from sklearn.model_selection import KFold
         kf = KFold(n_splits=n_folds, shuffle=True, random_state=random_state)
-        opt_lambdas = []   # (n_gamma,)
         opt_valid_err = [] # (n_gamma,)
 
         tau = 1 - self.alpha
         for gamma in self.gamma_grid:
-            fold_val_err = []
-            fold_lambdas = []
-            fold_v = []
-            fold_eta = []
+            fold_err = []
+            K_full = kernel(X, X, gamma)
             # --- CV loop ---
             for train_idx, valid_idx in kf.split(S):
                 S_train, S_val = S[train_idx], S[valid_idx]
                 Phi_train, Phi_val = Phi[train_idx, :], Phi[valid_idx, :]
-                X_train, X_val = X[train_idx, :], X[valid_idx, :]
                 
                 # fit path
-                K_train = kernel(X_train, X_train, gamma)
+                K_train = K_full[np.ix_(train_idx, train_idx)]
                 res = lambda_path(S_train.ravel(), Phi_train, K_train, self.alpha,
-                                max_steps=self.max_steps, tol=self.tol, verbose=False)
+                            max_steps=self.max_steps, tol=self.tol, thres=self.thres,
+                            ridge=self.ridge, verbose=False)
                 
                 # validation fit
-                K_val = kernel(X_val, X_train, gamma)
+                K_val = K_full[np.ix_(valid_idx, train_idx)]
                 fit_val = Phi_val @ res['eta_arr'].T + (K_val @ res['v_arr'].T)/res['lambdas'][None, :]
                 
                 # quantile loss
@@ -169,13 +170,10 @@ class SpeedCP:
 
                 # best lambda in this fold
                 opt = np.argmin(val_err)
-                fold_val_err.append(val_err[opt])
-                fold_lambdas.append(res['lambdas'][opt])
-                fold_v.append(res['v_arr'][opt, :])
-                fold_eta.append(res['eta_arr'][opt, :])
+                fold_err.append(val_err[opt])
 
             # --- aggregate across folds ---
-            mean_val_err = np.mean(fold_val_err)
+            mean_val_err = np.mean(fold_err)
             opt_valid_err.append(mean_val_err)
         
         # choose best gamma by CV error
@@ -184,7 +182,8 @@ class SpeedCP:
 
         K_full = kernel(X, X, best_gamma)
         res_full = lambda_path(S.ravel(), Phi, K_full, self.alpha,
-                            max_steps=self.max_steps, tol=self.tol,verbose=False)
+                            max_steps=self.max_steps, tol=self.tol, thres=self.thres,
+                            ridge=self.ridge, verbose=False)
         b = int(np.argmin(res_full["Csic"]))
         best_lambda = float(res_full["lambdas"][b])
         best_v = res_full["v_arr"][b, :].copy()
@@ -203,7 +202,7 @@ class SpeedCP:
     # Stage 2: compute S_opt for each test point (S_path)
     # -------------------------------------------------
     def fit(self, X_cal: np.ndarray, Phi_cal: np.ndarray, S_cal: np.ndarray,
-            X_test: np.ndarray, Phi_test: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+            X_test: np.ndarray, Phi_test: np.ndarray, random_state: int) -> Tuple[np.ndarray, np.ndarray]:
         """
         Ensure gamma/lambda are selected, then run S_path for each test point.
         Returns S_opt_array and S_init_array
@@ -212,11 +211,25 @@ class SpeedCP:
         S_init_array : (n_test,) array of initial S for each test sample.
         """
         # ensure we have gamma, lambda, v, eta
+        start_time = time.time()
         if self.lam is None or self.gamma is None or self.calib_v is None:
-            if self.use_cv:
-                self.search_gamma_lambda_CV(X_cal, Phi_cal, S_cal)
+            # if use_split, split calibration set to tune hyperparameters
+            if self.use_split:
+                calib_idx, valid_idx = train_test_split(
+                    np.arange(len(X_cal)),
+                    test_size = 0.5,
+                    random_state = random_state)
+                X_cal, X_val = X_cal[calib_idx, :], X_cal[valid_idx, :]
+                Phi_cal, Phi_val = Phi_cal[calib_idx, :], Phi_cal[valid_idx, :]
+                S_cal, S_val = S_cal[calib_idx], S_cal[valid_idx]
             else:
-                self.search_gamma_lambda(X_cal, Phi_cal, S_cal)
+                X_val, Phi_val, S_val = X_cal, Phi_cal, S_cal
+            if self.use_cv:
+                self.search_gamma_lambda_CV(X_val, Phi_val, S_val)
+            else:
+                self.search_gamma_lambda(X_val, Phi_val, S_val)
+        self.time_tune = time.time()-start_time
+
         S_cal = np.asarray(S_cal, float).ravel()
         X_cal = np.asarray(X_cal, float)
         Phi_cal = np.asarray(Phi_cal, float)
@@ -238,7 +251,7 @@ class SpeedCP:
             res_S = S_path(
                 S_cal, Phi_all, K_all, self.lam, self.alpha,
                 alpha0=alpha0, best_v=self.calib_v, best_eta=self.calib_eta,
-                start_side=self.start_side, max_steps=100,
+                start_side=self.start_side, max_steps=self.max_steps,
                 eps=self.eps, tol=self.tol, ridge=self.ridge, verbose=self.verbose
             )
             out_S[i] = float(res_S["S_opt"])

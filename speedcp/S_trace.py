@@ -1,5 +1,5 @@
 import numpy as np
-from FastKernCP.utils import kernel, pinball
+from speedcp.utils import pinball
 from cvxopt import matrix, solvers
 
 def _as_np_unique_sorted(a):
@@ -9,9 +9,8 @@ def _as_np_unique_sorted(a):
 
 def S_path(
     S_cal, Phi, K, lam, alpha, alpha0, best_v, best_eta,
-    start_side='left', max_steps=200, eps=1e-3, tol=1e-6, ridge=1e-8, verbose=False
-):
-   """
+    start_side='left', max_steps=200, eps=1e-3, tol=1e-6, ridge=1e-8, verbose=False):
+    """
     Compute the full lambda path for the kernel quantile regression problem
     with pinball loss at level alpha.
     Parameters

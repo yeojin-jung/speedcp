@@ -3,6 +3,7 @@ import pandas as pd
 from numpy.linalg import norm
 
 from sklearn.metrics.pairwise import rbf_kernel
+from sklearn.model_selection import train_test_split
 
 from scipy.sparse.linalg import svds
 from scipy.optimize import linear_sum_assignment
@@ -12,7 +13,6 @@ import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 
 import cvxpy as cp
-from tqdm import tqdm
 
 def kernel(x, y, gamma):
     return rbf_kernel(x,y, gamma=gamma)
@@ -47,6 +47,99 @@ def row_standardize(matrix):
     row_stds[row_stds == 0] = 1.0
     standardized_matrix = (matrix - row_means) / row_stds
     return standardized_matrix
+
+def align_order(k, K):
+    order = np.zeros(K, dtype=int)
+    order[np.where(np.arange(K) != k)[0]] = np.random.choice(
+        np.arange(1, K), K - 1, replace=False
+    )
+    order[k] = 0
+    return order
+
+
+def split_data(X, y, calib_prop=0.3, test_prop=0.1, random_state=127):
+    n = len(X)
+    n_tc = int(n*(1 - test_prop))
+    test_idx = np.arange(n_tc, n)
+
+    train_calib_idx = np.arange(n_tc)
+    train_idx, calib_idx = train_test_split(
+        train_calib_idx,
+        test_size=calib_prop/(1-test_prop),
+        random_state=random_state
+    )
+    data = {
+        'train':   (X[train_idx],  y[train_idx],  train_idx),
+        'calib':   (X[calib_idx],  y[calib_idx],  calib_idx),
+        'test':    (X[test_idx],   y[test_idx],   test_idx)
+    }
+    return data
+
+def sample_MN(p, N):
+    return np.random.multinomial(N, p, size=1)
+
+def barycentric_to_cartesian(p):
+    """ Map (p1, p2, p3) probability vector to 2D Cartesian coordinates in simplex """
+    x = 0.5 * (2*p[:,1] + p[:,2]) / (p[:,0] + p[:,1] + p[:,2])
+    y = (np.sqrt(3)/2) * p[:,2] / (p[:,0] + p[:,1] + p[:,2])
+    return np.column_stack((x, y))
+
+def generate_W(n, K):
+    alpha = [2] + [1]*(K-1)
+    W = np.zeros((n,K))
+    probs = np.random.dirichlet(alpha, size=n)
+    topics = np.random.choice(np.arange(K),n,replace=True)
+    for k in range(K):
+        inds = np.where(topics==k)[0]
+        order = align_order(k, K)
+        W[inds,:] = probs[np.ix_(inds, order)]
+        
+    # generate pure doc
+    anchor_ind = np.random.choice(np.arange(n), K, replace=False)
+    W[anchor_ind, :] = np.eye(K)
+    W = np.apply_along_axis(lambda x: x/np.sum(x), 1, W)
+    return W
+
+def generate_data(N,n,p,K,test_prop):
+    n_tc = int(n*(1-test_prop))
+    W_tc  = generate_W(n_tc, K)
+
+    # generate test mixtures with covariate shift
+    alpha = [2] + [1]*(K-1)
+    W_test = np.random.dirichlet(alpha, size=n-n_tc)
+    n_shuffle = int(0.3 * W_test.shape[0])
+    shuffle_rows = np.random.choice(W_test.shape[0], size = n_shuffle, replace=False)
+    for row in shuffle_rows:
+        np.random.shuffle(W_test[row])
+    W = np.vstack([W_tc, W_test])
+   
+    A = np.random.uniform(0,1,size=(p,K))
+    anchor_ind = np.random.choice(np.arange(p), K, replace=False)
+    A[anchor_ind, :] = np.eye(K)
+    A = np.apply_along_axis(lambda x: x/np.sum(x), 0, A)
+
+    D0 = W @ A.T
+    D = np.apply_along_axis(sample_MN, 1, D0, N).reshape(n,p)
+    assert np.sum(D.sum(axis=1)!=N)==0
+
+    X = D/N
+
+    n_covariate = W.shape[1]
+    beta = np.random.uniform(1,10,size=(n_covariate,1))
+    beta = beta/beta.sum()
+    nonlin = (W[:,0]*beta[0]+W[:,1]*beta[1]+W[:,2]*beta[2])
+    nonlin += np.sin(2*np.pi*W[:,0]) + W[:,1]**2
+
+    scale_1 = 0.1
+    scale_2 = 0.1
+    scale_3 = 0.3
+    topics = np.argmax(W, axis=1)
+    noise = np.random.normal(scale=np.where(topics==1, scale_1,
+                                            np.where(topics == 3, scale_2, scale_3)),
+                                            size=n)
+    y = nonlin.reshape(n,1) + noise.reshape(n,1)
+
+    return X, y, D, W, A
 
 def run_plsi(X, k):
     U, L, V = svds(X, k)
