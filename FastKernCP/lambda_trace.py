@@ -1,5 +1,5 @@
 import numpy as np
-from speedcp.utils import pinball
+from FastKernCP.utils import kernel, pinball
 from cvxopt import matrix, solvers
 
 def _as_np_unique_sorted(a):

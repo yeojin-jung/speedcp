@@ -5,25 +5,24 @@ import pickle
 import argparse
 from scipy.stats import gaussian_kde
 
-# required for running conditional-conformal (Gibbs et al., 2024)
+# required for running conditional-conformal
 os.environ["MOSEK_NUM_THREADS"] = "4"
 os.environ["OMP_NUM_THREADS"] = "4"
 os.environ["OPENBLAS_NUM_THREADS"] = "4"
 
-from speedcp.speedcp import SpeedCP
-from speedcp.utils import *
+from FastKernCP.speedcp import SpeedCP
+from FastKernCP.utils import *
 
-# download conditional-conformal/conditionalconformal 
-# from https://github.com/jjcherian/conditional-conformal.git
 from conditionalconformal import CondConf
 from experiments.crossval import runCV
 
-# download PCP from https://github.com/yaozhang24/pcp.git
 from PCP.utils import PCP, RLCP
 
 from sklearn.linear_model import LinearRegression
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.neural_network import MLPRegressor
+from sklearn.cluster import KMeans
+from sklearn.model_selection import train_test_split
 
 # =========================
 # Default Configurations
@@ -46,11 +45,18 @@ thres = 10.0
 ridge = 1e-08
 randomize = True
 
-DEFAULT_OUTDIR = "../results/mixture"
+DEFAULT_OUTDIR = "mixture_outputs_new_new"
 
 def parse_args():
     parser = argparse.ArgumentParser()
 
+    parser.add_argument(
+        "--experiment",
+        type=str,
+        choices=["predictor", "nW", "Wsource"],
+        required=True,
+        help="predictor: vary predictor at fixed n; nW: vary n and choose W_true/W_est"
+    )
     parser.add_argument(
         "--predictor",
         type=str,
@@ -224,10 +230,10 @@ def run_one_trial_speedcp(args, trial_idx):
     # -------------------------
     # 9) Save everything
     # -------------------------
-    tag = f"pred-{args.predictor}_n{args.n}_W-{W_source}"
+    tag = f"{args.experiment}_pred-{args.predictor}_n{args.n}_W-{W_source}"
     if args.tag:
         tag += f"_{args.tag}"
-    fname = f"mixture_{tag}_seed{SEED}.npz"
+    fname = f"mixture_outputs_{tag}_seed{SEED}.npz"
     save_path = os.path.join(args.outdir, fname)
 
     np.savez_compressed(
@@ -465,10 +471,10 @@ def run_one_trial(args, trial_idx):
     # -------------------------
     # 9) Save everything
     # -------------------------
-    tag = f"pred-{args.predictor}_n{args.n}_W-{W_source}"
+    tag = f"{args.experiment}_pred-{args.predictor}_n{args.n}_W-{W_source}"
     if args.tag:
         tag += f"_{args.tag}"
-    fname = f"mixture_{tag}_seed{SEED}.npz"
+    fname = f"mixture_outputs_{tag}_seed{SEED}.npz"
     save_path = os.path.join(args.outdir, fname)
 
     print(f"Cutoffs: SCP = {cutoffs_scp}, SpeedCP = {np.mean(cutoffs_speedcp)}, PCP = {np.mean(cutoffs_pcp)}, RLCP = {np.mean(cutoffs_rlcp)}, CondConf = {np.mean(cutoffs_cc)}")
@@ -527,7 +533,7 @@ def main():
     # ----- run trials -----
     for local_idx in range(args.ntrials):
         trial_idx = args.trial_offset + local_idx
-        run_one_trial(args, trial_idx)
+        run_one_trial_speedcp(args, trial_idx)
 
     # ----- barycentric / KDE block -----
     # Use the SAME global trial indices as above
@@ -556,7 +562,13 @@ def main():
     #calib_points = np.vstack(calib_points)
     #all_list = [calib_points, test_points]
 
-    #with open(os.path.join(args.outdir, "all_list.pkl"), "wb") as f:
+    #kde = gaussian_kde(calib_points.T, bw_method='scott')
+    #density = kde(calib_points.T)
+    #n_clusters = 10
+    #kmeans = KMeans(n_clusters=n_clusters, random_state=0)
+    #kmeans.fit(calib_points, sample_weight=density)
+
+    #with open(os.path.join(args.outdir, fname), "wb") as f:
     #    pickle.dump(all_list, f)
 
 

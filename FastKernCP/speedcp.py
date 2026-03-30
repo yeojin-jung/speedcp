@@ -1,8 +1,8 @@
-import numpy as np
 import time
-from speedcp.utils import *
-from speedcp.lambda_trace import lambda_path
-from speedcp.S_trace import S_path
+import numpy as np
+from FastKernCP.utils import *
+from FastKernCP.lambda_trace import lambda_path
+from FastKernCP.S_trace import S_path
 from typing import Tuple
 from sklearn.model_selection import KFold, train_test_split
 
@@ -69,19 +69,54 @@ class SpeedCP:
         self.calib_eta = None
         self.sics = None
         self.best_idx = None
+        self.elbow_sizes = None
+        self.elbow_sizes_by_gamma = None
+        self.s_path_elbow_sizes = None
+        self.s_path_elbows_by_test = None
 
     @staticmethod
     def _as_np_unique_sorted(a):
         a = np.asarray(a, dtype=int).ravel()
         return np.unique(a) if a.size else a
     
+    @staticmethod
+    def _elbow_sizes_from_result(res):
+        elbows = res.get("Elbows", [])
+        return np.asarray([len(e) for e in elbows], dtype=int)
+
+    def _store_path_state(self, res, idx: int):
+        self.lam = float(res["lambdas"][idx])
+        self.calib_v = res["v_arr"][idx, :].copy()
+        self.calib_eta = res["eta_arr"][idx, :].copy() if res.get("eta_arr") is not None else None
+        self.sics = np.asarray(res["Csic"], dtype=float).copy()
+        self.best_idx = int(idx)
+        self.elbow_sizes = self._elbow_sizes_from_result(res)
+
+    def _refit_selected_lambda(self, X_cal: np.ndarray, Phi_cal: np.ndarray, S_cal: np.ndarray):
+        """
+        Recompute path coefficients on the calibration subset used by S_path,
+        choosing the path point closest to the tuned lambda.
+        """
+        if self.gamma is None or self.lam is None:
+            raise RuntimeError("Gamma and lambda must be set before refitting.")
+
+        K = kernel(X_cal, X_cal, self.gamma)
+        res = lambda_path(
+            np.asarray(S_cal, float).ravel(), np.asarray(Phi_cal, float), K, self.alpha,
+            max_steps=self.max_steps, tol=self.tol, thres=self.thres,
+            ridge=self.ridge, verbose=self.verbose
+        )
+        idx = int(np.argmin(np.abs(res["lambdas"] - self.lam)))
+        self._store_path_state(res, idx)
+    
     # --------------------------------------------
     # Stage 1: search (or fix) gamma and best lambda
     # --------------------------------------------
     def search_gamma_lambda(self, X_cal: np.ndarray, Phi_cal: np.ndarray, S_cal: np.ndarray):
         """
-        Grid search for gamma and lambda by CSIC (Schwarz information criterion),
-        and stores: self.gamma, self.lam, self.calib_v, self.calib_eta, self.sics.
+        Grid search for gamma and lambda by CSIC,
+        and stores: self.gamma, self.lam, self.calib_v, self.calib_eta, self.sics,
+        self.elbow_sizes, self.elbow_sizes_by_gamma.
         """
         S_cal = np.asarray(S_cal, float).ravel()
         X_cal = np.asarray(X_cal, float)
@@ -94,11 +129,10 @@ class SpeedCP:
                 ridge=self.ridge, verbose=self.verbose
             )
             best = int(np.argmin(res["Csic"]))
-            self.lam = float(res["lambdas"][best])
-            self.calib_v = res["v_arr"][best, :].copy()
-            self.calib_eta = res["eta_arr"][best, :].copy() if res.get("eta_arr") is not None else None
-            self.sics = np.array([res["Csic"][best]], dtype=float)
-            self.best_idx = best
+            self._store_path_state(res, best)
+            self.elbow_sizes_by_gamma = {
+                float(self.gamma): self.elbow_sizes.copy()
+            }
             return
 
         best_sic = np.inf
@@ -107,7 +141,10 @@ class SpeedCP:
         best_eta = None
         best_lambda = None
         best_idx = None
-        all_sics = []
+        elbow_sizes_by_gamma = {}
+        best_elbow_sizes = None
+        best_sics = None
+
         for g in self.gamma_grid:
             K = kernel(X_cal, X_cal, g)
 
@@ -116,8 +153,9 @@ class SpeedCP:
                 max_steps=self.max_steps, tol=self.tol, thres=self.thres,
                 ridge=self.ridge, verbose=False
             )
+            elbow_sizes = self._elbow_sizes_from_result(res)
+            elbow_sizes_by_gamma[float(g)] = elbow_sizes
             b = int(np.argmin(res["Csic"]))
-            all_sics.append(float(res["Csic"][b]))
             if res["Csic"][b] < best_sic:
                 best_sic = float(res["Csic"][b])
                 best_gamma = float(g)
@@ -125,24 +163,32 @@ class SpeedCP:
                 best_eta = res["eta_arr"][b, :].copy() if res.get("eta_arr") is not None else None
                 best_lambda = float(res["lambdas"][b])
                 best_idx = b
+                best_elbow_sizes = elbow_sizes.copy()
+                best_sics = np.asarray(res["Csic"], dtype=float).copy()
+            
         # store
         self.gamma = best_gamma
-        self.sics = np.array(all_sics, dtype=float)
+        self.sics = best_sics
         self.lam = best_lambda
         self.calib_v = best_v
         self.calib_eta = best_eta
         self.best_idx = best_idx
+        self.elbow_sizes = best_elbow_sizes
+        self.elbow_sizes_by_gamma = elbow_sizes_by_gamma
+        
         if self.verbose:
-            print(f"[gamma search] best γ={best_gamma:.6g}, λ*={best_lambda:.6g}, CSIC={best_sic:.6g}")
+            print(f"[gamma search] best γ={best_gamma:.6g}, λ*={best_lambda:.6g}, CSIC={best_sic:.6g}, Elbow size={np.mean(best_elbow_sizes)}")
     
     def search_gamma_lambda_CV(self, X, Phi, S, n_folds = 5,
                                random_state = 123):
         """
         Cross-validated gamma and lambda search
-        and stores: self.gamma, self.lam, self.calib_v, self.calib_eta, self.sics.
+        and stores: self.gamma, self.lam, self.calib_v, self.calib_eta, self.sics,
+        self.elbow_sizes, self.elbow_sizes_by_gamma.
         """
         kf = KFold(n_splits=n_folds, shuffle=True, random_state=random_state)
         opt_valid_err = [] # (n_gamma,)
+        elbow_sizes_by_gamma = {}
 
         tau = 1 - self.alpha
         for gamma in self.gamma_grid:
@@ -152,14 +198,20 @@ class SpeedCP:
             for train_idx, valid_idx in kf.split(S):
                 S_train, S_val = S[train_idx], S[valid_idx]
                 Phi_train, Phi_val = Phi[train_idx, :], Phi[valid_idx, :]
+                #X_train, X_val = X[train_idx, :], X[valid_idx, :]
                 
                 # fit path
+                #K_train = kernel(X_train, X_train, gamma)
                 K_train = K_full[np.ix_(train_idx, train_idx)]
                 res = lambda_path(S_train.ravel(), Phi_train, K_train, self.alpha,
                             max_steps=self.max_steps, tol=self.tol, thres=self.thres,
                             ridge=self.ridge, verbose=False)
+                elbow_sizes_by_gamma.setdefault(float(gamma), []).append(
+                    self._elbow_sizes_from_result(res)
+                )
                 
                 # validation fit
+                #K_val = kernel(X_val, X_train, gamma)
                 K_val = K_full[np.ix_(valid_idx, train_idx)]
                 fit_val = Phi_val @ res['eta_arr'].T + (K_val @ res['v_arr'].T)/res['lambdas'][None, :]
                 
@@ -186,15 +238,18 @@ class SpeedCP:
                             ridge=self.ridge, verbose=False)
         b = int(np.argmin(res_full["Csic"]))
         best_lambda = float(res_full["lambdas"][b])
-        best_v = res_full["v_arr"][b, :].copy()
-        best_eta = res_full["eta_arr"][b, :].copy() if res_full.get("eta_arr") is not None else None
+        #best_v = res_full["v_arr"][b, :].copy()
+        #best_eta = res_full["eta_arr"][b, :].copy() if res_full.get("eta_arr") is not None else None
 
         # store
         self.gamma = best_gamma
         self.valid_err = np.array(opt_valid_err, dtype=float)
-        self.lam = best_lambda
-        self.calib_v = best_v
-        self.calib_eta = best_eta
+        self._store_path_state(res_full, b)
+        elbow_sizes_by_gamma[float(best_gamma)] = {
+            "cv_folds": elbow_sizes_by_gamma.get(float(best_gamma), []),
+            "refit": self.elbow_sizes.copy()
+        }
+        self.elbow_sizes_by_gamma = elbow_sizes_by_gamma
         if self.verbose:
             print(f"[gamma search] best γ={best_gamma:.6g}, λ*={best_lambda:.6g}, Validation Error={np.min(self.valid_err):.6g}")
 
@@ -228,6 +283,8 @@ class SpeedCP:
                 self.search_gamma_lambda_CV(X_val, Phi_val, S_val)
             else:
                 self.search_gamma_lambda(X_val, Phi_val, S_val)
+            #if self.use_split:
+            #    self._refit_selected_lambda(X_cal, Phi_cal, S_cal)
         self.time_tune = time.time()-start_time
 
         S_cal = np.asarray(S_cal, float).ravel()
@@ -238,6 +295,7 @@ class SpeedCP:
         n_test = X_test.shape[0]
         out_S = np.empty(n_test, dtype=float)
         out_S_init = np.empty(n_test, dtype=float)
+        self.s_path_elbows_by_test = []
 
         for i in range(n_test):
             u = np.random.uniform(-self.alpha, 1-self.alpha, size=1)[0]
@@ -256,7 +314,17 @@ class SpeedCP:
             )
             out_S[i] = float(res_S["S_opt"])
             out_S_init[i] = float(res_S["S_init"])
-            
+            self.s_path_elbows_by_test.append(self._elbow_sizes_from_result(res_S))
+
+        if self.s_path_elbows_by_test:
+            max_len = max(arr.size for arr in self.s_path_elbows_by_test)
+            s_path_elbow_sizes = np.full((n_test, max_len), np.nan, dtype=float)
+            for i, arr in enumerate(self.s_path_elbows_by_test):
+                s_path_elbow_sizes[i, :arr.size] = arr
+            self.s_path_elbow_sizes = s_path_elbow_sizes
+        else:
+            self.s_path_elbow_sizes = np.empty((0, 0), dtype=float)
+
         return out_S, out_S_init
     
     def predict(self, X_cal, Phi_cal, X_new, Phi_new) -> np.ndarray:

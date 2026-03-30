@@ -14,6 +14,8 @@ import matplotlib.cm as cm
 
 import cvxpy as cp
 
+from tqdm import tqdm
+
 def kernel(x, y, gamma):
     return rbf_kernel(x,y, gamma=gamma)
 
