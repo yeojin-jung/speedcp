@@ -4,21 +4,19 @@ import numpy as np
 import pickle
 from scipy.stats import gaussian_kde
 
-# required or runnning conditional-conformal
+# required for running conditional-conformal
 os.environ["MOSEK_NUM_THREADS"] = "4"
 os.environ["OMP_NUM_THREADS"] = "4"
 os.environ["OPENBLAS_NUM_THREADS"] = "4"
 
-from FastKernCP.speedcp import SpeedCP
-from FastKernCP.utils import *
+from speedcp import SpeedCP
+from speedcp.utils import *
 
-# download conditional-conformal (Gibbs et al., 2023)
-# !git clone https://github.com/jjcherian/conditional-conformal.git
+# External baseline: install conditional-conformal separately.
 from conditionalconformal import CondConf
-from experiments.crossval import runCV
+from experiments.common.crossval import runCV
 
-# download PCP (Zhang et al., 2004)
-# !git clone https://github.com/yaozhang24/pcp.git
+# External baseline: install PCP/RLCP separately.
 from PCP.utils import PCP, RLCP
 
 from sklearn.linear_model import LinearRegression
@@ -39,7 +37,7 @@ test_prop = 0.5
 calib_prop = 0.4
 alpha = 0.1
 
-OUTDIR = "mixture_outputs"
+OUTDIR = "results/synthetic/mixture_original"
 os.makedirs(OUTDIR, exist_ok=True)
 
 def split_data(X, y, calib_prop=0.3, test_prop=0.1, random_state=127):

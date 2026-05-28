@@ -1,1 +1,20 @@
 .DS_Store
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ipynb_checkpoints/
+
+# Experiment outputs and local data
+data/
+arxiv/
+*_outputs*/
+*results*/
+*.npz
+*.npy
+*.joblib
+*.pkl
+
+# Local environments
+.venv/
+venv/

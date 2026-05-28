@@ -19,5 +19,8 @@ dependencies = [
   "pandas",
 ]
 
-[tool.setuptools]
-packages = ["speedcp"]
+[tool.setuptools.packages.find]
+include = [
+  "speedcp*",
+  "experiments*",
+]

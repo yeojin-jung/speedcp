@@ -8,13 +8,20 @@ from sklearn.model_selection import train_test_split
 from scipy.sparse.linalg import svds
 from scipy.optimize import linear_sum_assignment
 
-import ternary
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 
-import cvxpy as cp
-
 from tqdm import tqdm
+
+try:
+    import cvxpy as cp
+except ImportError:  # only needed by pLSI preconditioning utilities
+    cp = None
+
+try:
+    import ternary
+except ImportError:  # plotting helper only; core algorithms do not need it
+    ternary = None
 
 def kernel(x, y, gamma):
     return rbf_kernel(x,y, gamma=gamma)
@@ -160,6 +167,8 @@ def preprocess_U(U, K):
     return U
 
 def precondition_M(M, K):
+    if cp is None:
+        raise ImportError("precondition_M requires the optional 'cvxpy' package.")
     Q = cp.Variable((K, K), symmetric=True)
     objective = cp.Maximize(cp.log_det(Q))
     constraints = [cp.norm(Q @ M, axis=0) <= 1]
@@ -220,6 +229,8 @@ def get_component_mapping(stats_1, stats_2):
     return P
 
 def plot_ternary(data_points, cover_vector, title, ax):
+    if ternary is None:
+        raise ImportError("plot_ternary requires the optional 'python-ternary' package.")
     scale = 1  # Simplex sum should be 1
     tax = ternary.TernaryAxesSubplot(ax=ax, scale=scale)
 
@@ -240,6 +251,8 @@ def plot_ternary(data_points, cover_vector, title, ax):
 def plot_ternary_size(data_points, cover_vector, title, ax,
                       vmin, vmax,
                       cmap = cm.plasma):
+    if ternary is None:
+        raise ImportError("plot_ternary_size requires the optional 'python-ternary' package.")
     scale = 1
     tax = ternary.TernaryAxesSubplot(ax=ax, scale=scale)
     scatter = tax.scatter(data_points, marker='o', c=cover_vector, 

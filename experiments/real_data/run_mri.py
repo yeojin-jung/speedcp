@@ -319,21 +319,19 @@ import time
 from sklearn.decomposition import PCA
 from sklearn.preprocessing import StandardScaler
 
-# required or runnning conditional-conformal
+# required for running conditional-conformal
 os.environ["MOSEK_NUM_THREADS"] = "4"
 os.environ["OMP_NUM_THREADS"] = "4"
 os.environ["OPENBLAS_NUM_THREADS"] = "4"
 
-from FastKernCP.speedcp import SpeedCP
-from FastKernCP.utils import *
+from speedcp import SpeedCP
+from speedcp.utils import *
 
-# download conditional-conformal (Gibbs et al., 2023)
-# !git clone https://github.com/jjcherian/conditional-conformal.git
+# External baseline: install conditional-conformal separately.
 from conditionalconformal import CondConf
-from experiments.crossval import runCV
+from experiments.common.crossval import runCV
 
-# download PCP (Zhang et al., 2004)
-# !git clone https://github.com/yaozhang24/pcp.git
+# External baseline: install PCP/RLCP separately.
 from PCP.utils import PCP, RLCP
 
 
@@ -604,10 +602,11 @@ def main(CP_method, OUTPUT_DIR):
         device = "cpu" 
 
     # load the data from the pt file
-    MRI = torch.load("MRI.pt", weights_only=False)
-    MRI_train_dataset = torch.load("mri_train.pt", weights_only=False)
-    MRI_calib_dataset = torch.load("mri_calib.pt", weights_only=False)
-    MRI_test_dataset  = torch.load("mri_test.pt", weights_only=False)
+    data_dir = "data/mri"
+    MRI = torch.load(os.path.join(data_dir, "MRI.pt"), weights_only=False)
+    MRI_train_dataset = torch.load(os.path.join(data_dir, "mri_train.pt"), weights_only=False)
+    MRI_calib_dataset = torch.load(os.path.join(data_dir, "mri_calib.pt"), weights_only=False)
+    MRI_test_dataset  = torch.load(os.path.join(data_dir, "mri_test.pt"), weights_only=False)
     from torch.utils.data import ConcatDataset, random_split
     MRI_combined = ConcatDataset([MRI_calib_dataset, MRI_test_dataset])
     # # create the data loader
@@ -618,7 +617,7 @@ def main(CP_method, OUTPUT_DIR):
     # load the model
     alpha = args.alpha
     model = MRIModelFCP(in_channels=3, num_classes=2)
-    model.load_state_dict(torch.load("mri_model.pth", map_location=device))
+    model.load_state_dict(torch.load(os.path.join(data_dir, "mri_model.pth"), map_location=device))
     model = model.to(device)
     # run the experiments
     output_dir = os.path.join(OUTPUT_DIR, f"{args.score_type}_{args.group_condition_type}_{args.n_groups}_{args.use_pca}_{args.r_pca}")
@@ -705,9 +704,8 @@ def main(CP_method, OUTPUT_DIR):
 
 # create the main function
 if __name__ == "__main__":
-    OUTPUT_DIR = "mri_results/"
+    OUTPUT_DIR = "results/real_data/mri"
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     main("all", OUTPUT_DIR)
     print("Done")
-
 

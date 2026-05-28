@@ -15,24 +15,22 @@ import joblib
 
 from scipy.linalg import orthogonal_procrustes
 
-from moleculenet_helpers import *
-from tinyGNN import TinyGNN
+from experiments.common.moleculenet_helpers import *
+from experiments.common.tiny_gnn import TinyGNN
 
-# required or runnning conditional-conformal
+# required for running conditional-conformal
 os.environ["MOSEK_NUM_THREADS"] = "4"
 os.environ["OMP_NUM_THREADS"] = "4"
 os.environ["OPENBLAS_NUM_THREADS"] = "4"
 
-from FastKernCP.speedcp import SpeedCP
-from FastKernCP.utils import *
+from speedcp import SpeedCP
+from speedcp.utils import *
 
-# download conditional-conformal (Gibbs et al., 2023)
-# !git clone https://github.com/jjcherian/conditional-conformal.git
+# External baseline: install conditional-conformal separately.
 from conditionalconformal import CondConf
-from experiments.crossval import runCV
+from experiments.common.crossval import runCV
 
-# download PCP (Zhang et al., 2004)
-# !git clone https://github.com/yaozhang24/pcp.git
+# External baseline: install PCP/RLCP separately.
 from PCP.utils import PCP, RLCP
 
 
@@ -50,7 +48,7 @@ LR         = 1e-3
 WD         = 1e-5
 
 ROOT   = "data/QM9"
-OUTDIR = "QM9_outputs_all"
+OUTDIR = "results/molecular/qm9"
 os.makedirs(OUTDIR, exist_ok=True)
 
 DEVICE = torch.device("cpu")

@@ -1,8 +1,8 @@
 import time
 import numpy as np
-from FastKernCP.utils import *
-from FastKernCP.lambda_trace import lambda_path
-from FastKernCP.S_trace import S_path
+from speedcp.utils import *
+from speedcp.lambda_trace import lambda_path
+from speedcp.S_trace import S_path
 from typing import Tuple
 from sklearn.model_selection import KFold, train_test_split
 

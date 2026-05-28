@@ -16,3 +16,9 @@ GraKeL==0.1.10
 shapely
 python-ternary
 reportlab
+
+# External baseline repositories used by experiment scripts.
+# They are intentionally not vendored in this repository.
+# Install them separately and make these imports available:
+# - conditionalconformal: https://github.com/jjcherian/conditional-conformal
+# - PCP.utils (PCP, RLCP): https://github.com/yaozhang24/pcp

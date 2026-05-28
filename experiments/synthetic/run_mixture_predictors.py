@@ -10,11 +10,11 @@ os.environ["MOSEK_NUM_THREADS"] = "4"
 os.environ["OMP_NUM_THREADS"] = "4"
 os.environ["OPENBLAS_NUM_THREADS"] = "4"
 
-from FastKernCP.speedcp import SpeedCP
-from FastKernCP.utils import *
+from speedcp import SpeedCP
+from speedcp.utils import *
 
 from conditionalconformal import CondConf
-from experiments.crossval import runCV
+from experiments.common.crossval import runCV
 
 from PCP.utils import PCP, RLCP
 
@@ -45,7 +45,7 @@ thres = 10.0
 ridge = 1e-08
 randomize = True
 
-DEFAULT_OUTDIR = "mixture_outputs_new_new"
+DEFAULT_OUTDIR = "results/synthetic/mixture_predictors"
 
 def parse_args():
     parser = argparse.ArgumentParser()

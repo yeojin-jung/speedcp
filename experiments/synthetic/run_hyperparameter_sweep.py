@@ -15,10 +15,10 @@ from scipy.stats import gaussian_kde
 from sklearn.cluster import KMeans
 from sklearn.linear_model import LinearRegression
 
-from FastKernCP.speedcp import SpeedCP
-from FastKernCP.S_trace import S_path
-from FastKernCP.lambda_trace import lambda_path
-from FastKernCP.utils import (
+from speedcp import SpeedCP
+from speedcp.S_trace import S_path
+from speedcp.lambda_trace import lambda_path
+from speedcp.utils import (
     generate_data, split_data, run_plsi, get_component_mapping,
     clr, row_standardize, barycentric_to_cartesian, kernel
 )
@@ -60,7 +60,7 @@ randomize = True
 N_JOBS_GRID = 1
 N_JOBS_SEED = int(os.environ.get("SLURM_CPUS_PER_TASK", "1"))
 
-OUTDIR = "mixture_outputs_hyper"
+OUTDIR = "results/synthetic/hyperparameter_sweep"
 os.makedirs(OUTDIR, exist_ok=True)
 
 def build_df_cover():

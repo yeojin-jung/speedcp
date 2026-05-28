@@ -2,21 +2,19 @@ import time
 import os
 import numpy as np
 
-# required or runnning conditional-conformal
+# required for running conditional-conformal
 os.environ["MOSEK_NUM_THREADS"] = "4"
 os.environ["OMP_NUM_THREADS"] = "4"
 os.environ["OPENBLAS_NUM_THREADS"] = "4"
 
-from FastKernCP.speedcp import SpeedCP
-from FastKernCP.utils import *
+from speedcp import SpeedCP
+from speedcp.utils import *
 
-# download conditional-conformal (Gibbs et al., 2023)
-# !git clone https://github.com/jjcherian/conditional-conformal.git
+# External baseline: install conditional-conformal separately.
 from conditionalconformal import CondConf
-from experiments.crossval import runCV
+from experiments.common.crossval import runCV
 
-# download PCP (Zhang et al., 2004)
-# !git clone https://github.com/yaozhang24/pcp.git
+# External baseline: install PCP/RLCP separately.
 from PCP.utils import PCP, RLCP
 
 from sklearn.linear_model import LinearRegression
@@ -26,15 +24,17 @@ from sklearn.model_selection import train_test_split
 # =========================
 # Configurations
 # =========================
-ROOT   = "arxiv"
+DATA_DIR = "data/arxiv"
+OUTDIR = "results/real_data/arxiv"
 BASE_SEED = 214
 NTOPICS = 5
 NTRIALS = 20
 
 def main():
-    X = np.loadtxt('X_arxiv.csv', delimiter=',')
-    y = np.loadtxt('y_arxiv.csv', delimiter=',')
-    W = np.loadtxt('W_arxiv.csv', delimiter=',')
+    os.makedirs(OUTDIR, exist_ok=True)
+    X = np.loadtxt(os.path.join(DATA_DIR, "X_arxiv.csv"), delimiter=",")
+    y = np.loadtxt(os.path.join(DATA_DIR, "y_arxiv.csv"), delimiter=",")
+    W = np.loadtxt(os.path.join(DATA_DIR, "W_arxiv.csv"), delimiter=",")
     print(f"W has shape {W.shape}")
     print(f"X has shape {X.shape}")
     print(f"y has shape {y.shape}")
@@ -168,7 +168,7 @@ def main():
             print(f"Cutoffs: SCP = {cutoffs_scp}, SpeedCP = {np.mean(cutoffs_speedcp)}, PCP = {np.mean(cutoffs_pcp)}, RLCP = {np.mean(cutoffs_rlcp)}, CondConf = {np.mean(cutoffs_cc)}")
 
             # ========= Save ALL results (all methods) =========
-            save_path = os.path.join(ROOT, f"arxiv_outputs_{SEED}.npz")
+            save_path = os.path.join(OUTDIR, f"arxiv_outputs_{SEED}.npz")
             np.savez_compressed(
                 save_path,
                 # --- metadata ---

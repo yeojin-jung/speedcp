@@ -1,11 +1,9 @@
 import time
 import os
 import numpy as np
-
 import torch
-import torch.nn.functional as F
 import torch_geometric.transforms as T
-from torch_geometric.datasets import MoleculeNet
+from torch_geometric.datasets import QM7b
 from torch_geometric.loader import DataLoader
 
 from sklearn.model_selection import train_test_split
@@ -15,51 +13,56 @@ import joblib
 
 from scipy.linalg import orthogonal_procrustes
 
-from moleculenet_helpers import *
-from tinyGNN import TinyGNN
+from experiments.common.moleculenet_helpers import *
+from experiments.common.tiny_gnn import TinyGNN
 
-# required or runnning conditional-conformal
+# required for running conditional-conformal
 os.environ["MOSEK_NUM_THREADS"] = "4"
 os.environ["OMP_NUM_THREADS"] = "4"
 os.environ["OPENBLAS_NUM_THREADS"] = "4"
 
-from FastKernCP.speedcp import SpeedCP
-from FastKernCP.utils import *
+from speedcp import SpeedCP
+from speedcp.utils import *
 
-# download conditional-conformal (Gibbs et al., 2023)
-# !git clone https://github.com/jjcherian/conditional-conformal.git
+# External baseline: install conditional-conformal separately.
 from conditionalconformal import CondConf
-from experiments.crossval import runCV
+from experiments.common.crossval import runCV
 
-# download PCP (Zhang et al., 2004)
-# !git clone https://github.com/yaozhang24/pcp.git
+# External baseline: install PCP/RLCP separately.
 from PCP.utils import PCP, RLCP
 
 
 # =========================
 # Configurations
 # =========================
-BASE_SEED  = 214
+BASE_SEED  = 214 
+N_SUBSET   = 2000                 
 BATCH_SIZE = 32
 EPOCHS     = 50
 PATIENCE   = 10
 HIDDEN     = 64
+TARGET_IDX = 13                  
 LR         = 1e-3
 WD         = 1e-5
 
-ROOT   = "data/MoleculeNet"
-OUTDIR = "ESOL_outputs_all"
+ROOT   = "data/QM7b"
+OUTDIR = "results/molecular/qm7b"
 os.makedirs(OUTDIR, exist_ok=True)
 
 DEVICE = torch.device("cpu")
-REF_ART_PATH = os.path.join(OUTDIR, "reference_pca_scaler.joblib")
-N_PCS = 3
+REF_ART_PATH = os.path.join(OUTDIR, "reference_pca_scaler.joblib")  # saved once and reused
+N_PCS = 3  # number of principal components to use downstream
+
 
 def make_loader(dataset_small, idxs, shuffle=False, batch_size=BATCH_SIZE):
     return DataLoader([dataset_small[i] for i in idxs], batch_size=batch_size, shuffle=shuffle)
 
-def load_or_fit_reference_pca(Z_train, random_state,
-                              ref_art_path=REF_ART_PATH, n_components=N_PCS, scale=True):
+
+def load_or_fit_reference_pca(Z_train,
+                              random_state,
+                              ref_art_path=REF_ART_PATH, 
+                              n_components=N_PCS, 
+                              scale = True):
     if os.path.exists(ref_art_path):
         art = joblib.load(ref_art_path)
         scaler_ref = art["scaler"] if scale else None
@@ -70,12 +73,17 @@ def load_or_fit_reference_pca(Z_train, random_state,
         scaler_ref = StandardScaler().fit(Z_train)
         Z_train_ = scaler_ref.transform(Z_train)
     else:
-        scaler_ref = None
         Z_train_ = Z_train
-
+        scaler_ref = None
     pca_ref = PCA(n_components=n_components, random_state=random_state, whiten=False).fit(Z_train_)
+
     joblib.dump({"scaler": scaler_ref, "pca": pca_ref}, ref_art_path)
     return scaler_ref, pca_ref, True
+
+def onehot(labels, k):
+    Phi = np.zeros((labels.size, k))
+    Phi[np.arange(labels.size), labels] = 1.0
+    return Phi
 
 def main(RUN):
     SEED = RUN + BASE_SEED
@@ -84,40 +92,43 @@ def main(RUN):
     # =========================
     # Dataset & transforms
     # =========================
-    name = "ESOL" 
-    dataset = MoleculeNet(root=ROOT, name=name)
+    transform = T.Compose([add_node_feats, select_target])
+    dataset = QM7b(root=ROOT, transform=transform)
+
+    rng = np.random.RandomState(SEED)
+    take = min(N_SUBSET, len(dataset))
+    subset_idx = rng.choice(len(dataset), size=take, replace=False)
+    dataset_small = dataset[subset_idx.tolist()]
 
     # =========================
     # Splits: Train / Cal / Test (50/25/25 here)
     # =========================
-    all_idx = np.arange(len(dataset))
-    train_idx, hold_idx = train_test_split(all_idx, test_size=0.6,  random_state=SEED)   # 50% train
+    all_idx = np.arange(len(dataset_small))
+    train_idx, hold_idx = train_test_split(all_idx, test_size=0.5,  random_state=SEED)  # 50% train
     cal_idx,   test_idx = train_test_split(hold_idx,  test_size=0.5, random_state=SEED)  # 25%/25%
 
     # Small val slice from TRAIN for early stopping
     train_ids, val_ids = train_test_split(train_idx, test_size=0.15, random_state=SEED)
 
-    train_loader_train = make_loader(dataset, train_ids, shuffle=True)
-    train_loader_val   = make_loader(dataset, val_ids,   shuffle=False)
-    train_loader_full  = make_loader(dataset, train_idx, shuffle=False)  # predictions/embeddings
-    cal_loader         = make_loader(dataset, cal_idx,   shuffle=False)
-    test_loader        = make_loader(dataset, test_idx,  shuffle=False)
+    train_loader_train = make_loader(dataset_small, train_ids, shuffle=True)
+    train_loader_val   = make_loader(dataset_small, val_ids,   shuffle=False)
+    train_loader_full  = make_loader(dataset_small, train_idx, shuffle=False)  # predictions/embeddings
+    cal_loader         = make_loader(dataset_small, cal_idx,   shuffle=False)
+    test_loader        = make_loader(dataset_small, test_idx,  shuffle=False)
 
     # =========================
     # Target normalization
     # =========================
-    y_train_vec = torch.tensor([dataset[i].y.item() for i in train_ids], dtype=torch.float)
+    y_train_vec = torch.tensor([dataset_small[i].y.item() for i in train_ids], dtype=torch.float)
     y_mean = y_train_vec.mean().item()
     y_std  = (y_train_vec.std(unbiased=False).item() if y_train_vec.numel() > 1 else 1.0)
 
-    # ========= run training / caching =========
-    model_outputs_path = f"esol_run_outputs_{SEED}.npz"
-    out_full = os.path.join(OUTDIR, model_outputs_path)
-
-    if os.path.exists(out_full):
-        print(f"Model outputs already exist at {model_outputs_path}. Loading.")
-        result = np.load(out_full)
-
+    # ========= run training =========
+    model_outputs_path = f"qm7b_run_outputs_{SEED}.npz"
+    if os.path.exists(os.path.join(OUTDIR, model_outputs_path)):
+        print(f"Model outputs already exist at {model_outputs_path}. Skipping training.")
+        result = np.load(os.path.join(OUTDIR, model_outputs_path))
+        
         yhat_train = result["yhat_train"]
         yhat_cal = result["yhat_cal"]
         yhat_test = result["yhat_test"]
@@ -134,19 +145,7 @@ def main(RUN):
         res_cal  = np.abs(y_cal  - yhat_cal)
         res_test = np.abs(y_test - yhat_test)
     else:
-        in_dim   = dataset.num_node_features
-        edge_dim = dataset.num_edge_features
-
-        model = TinyGNN(
-            in_dim=in_dim,
-            edge_dim=edge_dim,
-            hidden=HIDDEN,
-            depth=2,
-            dropout=0.1,
-            pool="mean",
-            use_bn=True,
-            residual=True
-        ).to(DEVICE)
+        model = TinyGNN(hidden=HIDDEN).to(DEVICE)  # or TinyGNNPlus(...)
         opt   = torch.optim.Adam(model.parameters(), lr=LR, weight_decay=WD)
 
         best_val = fit_with_early_stopping(
@@ -154,7 +153,7 @@ def main(RUN):
             train_loader_train, train_loader_val,
             DEVICE, y_mean, y_std,
             epochs=EPOCHS, patience=PATIENCE,
-            clip_grad=1.0,
+            clip_grad=1.0,          # or None
             scheduler=None
         )
 
@@ -165,20 +164,20 @@ def main(RUN):
 
         # Quick sanity:
         res_train = np.abs(y_train - yhat_train)
-        res_cal   = np.abs(y_cal   - yhat_cal)
-        res_test  = np.abs(y_test  - yhat_test)
+        res_cal  = np.abs(y_cal  - yhat_cal)
+        res_test = np.abs(y_test - yhat_test)
         print(f"Cal MAE: {res_cal.mean():.4f} | Test MAE: {res_test.mean():.4f}")
 
         # ========= Save raw run outputs (pre-PCA) =========
         np.savez(
-            out_full,
+            os.path.join(OUTDIR, f"qm7b_run_outputs_{SEED}.npz"),
             y_mean=y_mean, y_std=y_std,
             y_train=y_train, yhat_train=yhat_train, Z_train=Z_train,
             y_cal=y_cal,     yhat_cal=yhat_cal,     Z_cal=Z_cal,
             y_test=y_test,   yhat_test=yhat_test,   Z_test=Z_test
         )
-        print("Saved ->", out_full)
-    
+        print("Saved ->", os.path.join(OUTDIR, f"qm7b_run_outputs_{SEED}.npz"))
+
     # ========= Fixed StandardScaler + PCA across runs =========
     # Fit-once on TRAIN embeddings if reference artifacts not present; otherwise reuse.
     anchor_path = 'anchor_idx.npy'
@@ -328,9 +327,8 @@ def main(RUN):
     time_rlcp = time.time()-start_time
 
     print(f"Cutoffs: SCP = {cutoffs_scp}, SpeedCP = {np.mean(cutoffs_speedcp)}, PCP = {np.mean(cutoffs_pcp)}, RLCP = {np.mean(cutoffs_rlcp)}, CondConf = {np.mean(cutoffs_cc)}")
-
     # ========= Save ALL results (all methods) =========
-    save_path = os.path.join(OUTDIR, f"esol_fixed_pca_outputs_{SEED}.npz")
+    save_path = os.path.join(OUTDIR, f"qm7b_fixed_pca_outputs_{SEED}.npz")
     np.savez_compressed(
         save_path,
         # --- metadata ---
@@ -373,6 +371,7 @@ def main(RUN):
     )
     print("Saved ->", save_path)
 
+
 if __name__ == "__main__":
-    for run in range(EPOCHS):
-        main(run)
+    for i in range(EPOCHS):
+        main(i)

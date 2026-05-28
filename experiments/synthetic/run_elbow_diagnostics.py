@@ -8,9 +8,9 @@ import numpy as np
 from sklearn.linear_model import LinearRegression
 from sklearn.model_selection import train_test_split
 
-from FastKernCP.lambda_trace import lambda_path
-from FastKernCP.speedcp import SpeedCP
-from FastKernCP.utils import *
+from speedcp.lambda_trace import lambda_path
+from speedcp import SpeedCP
+from speedcp.utils import *
 
 
 # =========================
@@ -44,7 +44,7 @@ EXPERIMENT_3_DIRICHLET_ALPHAS = [
     (5, 1, 1),
 ]
 
-OUTDIR = "mixture_outputs/elbow_experiments"
+OUTDIR = "results/synthetic/elbow_diagnostics"
 os.makedirs(OUTDIR, exist_ok=True)
 
 
